@@ -43,7 +43,7 @@ const startServer = async () => {
     // On startup, no sockets are connected yet. Clear any stale online statuses
     await User.updateMany({ isOnline: true }, { isOnline: false });
 
-    server.listen(PORT, () => {
+    server.listen(PORT, "0.0.0.0", () => {
       console.log(`Server running on ${PORT}`);
     });
   } catch (error) {
