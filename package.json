@@ -1,0 +1,13 @@
+{
+  "name": "chat-application",
+  "private": true,
+  "scripts": {
+    "start": "npm --prefix backenedchat start",
+    "dev": "npm --prefix backenedchat run dev",
+    "dev:backend": "npm --prefix backenedchat run dev",
+    "dev:frontend": "npm --prefix frontendchat run dev"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3"
+  }
+}
