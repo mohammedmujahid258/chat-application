@@ -5,10 +5,27 @@ const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
   const [authUser, setAuthUser] = useState(() => {
-    const savedUser = localStorage.getItem("chat_user");
-    return savedUser ? JSON.parse(savedUser) : null;
+    try {
+      const savedUser = localStorage.getItem("chat_user");
+      if (!savedUser || savedUser === "undefined" || savedUser === "null") {
+        return null;
+      }
+      return JSON.parse(savedUser);
+    } catch (error) {
+      console.error("Failed to parse saved user from localStorage:", error);
+      localStorage.removeItem("chat_user");
+      return null;
+    }
   });
-  const [token, setToken] = useState(() => localStorage.getItem("chat_token") || null);
+
+  const [token, setToken] = useState(() => {
+    const savedToken = localStorage.getItem("chat_token");
+    if (!savedToken || savedToken === "undefined" || savedToken === "null") {
+      return null;
+    }
+    return savedToken;
+  });
+
   const [loading, setLoading] = useState(true);
 
   const logout = async () => {
@@ -26,7 +43,11 @@ export const AuthProvider = ({ children }) => {
   useEffect(() => {
     const verifyUser = async () => {
       const storedToken = localStorage.getItem("chat_token");
-      if (!storedToken) {
+      if (!storedToken || storedToken === "undefined" || storedToken === "null") {
+        localStorage.removeItem("chat_token");
+        localStorage.removeItem("chat_user");
+        setToken(null);
+        setAuthUser(null);
         setLoading(false);
         return;
       }
@@ -36,6 +57,8 @@ export const AuthProvider = ({ children }) => {
         if (res.data?.user) {
           setAuthUser(res.data.user);
           localStorage.setItem("chat_user", JSON.stringify(res.data.user));
+        } else {
+          logout();
         }
       } catch (error) {
         console.error("Token verification failed:", error);
@@ -52,11 +75,14 @@ export const AuthProvider = ({ children }) => {
     const res = await API.post("/auth/login", { email, password });
     const { token: receivedToken, user } = res.data;
 
-    localStorage.setItem("chat_token", receivedToken);
-    localStorage.setItem("chat_user", JSON.stringify(user));
-
-    setToken(receivedToken);
-    setAuthUser(user);
+    if (receivedToken) {
+      localStorage.setItem("chat_token", receivedToken);
+      setToken(receivedToken);
+    }
+    if (user) {
+      localStorage.setItem("chat_user", JSON.stringify(user));
+      setAuthUser(user);
+    }
     return res.data;
   };
 
@@ -66,8 +92,10 @@ export const AuthProvider = ({ children }) => {
   };
 
   const updateUser = (updatedUser) => {
-    setAuthUser(updatedUser);
-    localStorage.setItem("chat_user", JSON.stringify(updatedUser));
+    if (updatedUser) {
+      setAuthUser(updatedUser);
+      localStorage.setItem("chat_user", JSON.stringify(updatedUser));
+    }
   };
 
   return (
