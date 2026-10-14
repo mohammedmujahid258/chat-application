@@ -73,16 +73,16 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     const res = await API.post("/auth/login", { email, password });
-    const { token: receivedToken, user } = res.data;
+    const { token: receivedToken, user } = res.data || {};
 
-    if (receivedToken) {
-      localStorage.setItem("chat_token", receivedToken);
-      setToken(receivedToken);
+    if (!receivedToken || !user) {
+      throw new Error(res.data?.message || "Invalid response received from authentication server.");
     }
-    if (user) {
-      localStorage.setItem("chat_user", JSON.stringify(user));
-      setAuthUser(user);
-    }
+
+    localStorage.setItem("chat_token", receivedToken);
+    localStorage.setItem("chat_user", JSON.stringify(user));
+    setToken(receivedToken);
+    setAuthUser(user);
     return res.data;
   };
 

@@ -39,7 +39,7 @@ const Login = () => {
       await login(email.trim(), password);
       navigate("/");
     } catch (err) {
-      setError(err.response?.data?.message || "Invalid credentials. Please verify and try again.");
+      setError(err.response?.data?.message || err.message || "Invalid credentials. Please verify and try again.");
     } finally {
       setIsSubmitting(false);
     }

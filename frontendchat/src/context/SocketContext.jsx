@@ -21,7 +21,25 @@ export const SocketProvider = ({ children }) => {
       return undefined;
     }
 
-    const socketUrl = import.meta.env.VITE_SOCKET_URL || "http://localhost:5000";
+    const rawSocketUrl = import.meta.env.VITE_SOCKET_URL || "";
+    const sanitizedSocketUrl = rawSocketUrl
+      .replace(/^VITE_SOCKET_URL\s*=\s*/i, "")
+      .trim()
+      .replace(/\/+$/, "");
+
+    const isProductionDomain =
+      typeof window !== "undefined" &&
+      (window.location.hostname.includes("onrender.com") || window.location.hostname !== "localhost");
+
+    const defaultSocketUrl = isProductionDomain
+      ? "https://chat-application-ewnk.onrender.com"
+      : "http://localhost:5000";
+
+    const socketUrl =
+      sanitizedSocketUrl && sanitizedSocketUrl.startsWith("http")
+        ? sanitizedSocketUrl
+        : defaultSocketUrl;
+
     const newSocket = io(socketUrl, {
       auth: { token },
       query: { userId },

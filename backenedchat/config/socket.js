@@ -5,18 +5,23 @@ import express from "express";
 const app = express();
 const server = http.createServer(app);
 
+const envFrontend = process.env.FRONTEND_URL ? process.env.FRONTEND_URL.trim().replace(/\/+$/, "") : null;
+
 export const allowedOrigins = [
     "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
-    process.env.FRONTEND_URL,
+    "https://chat-application-web-0a70.onrender.com",
+    envFrontend,
 ].filter(Boolean);
 
 export const isOriginAllowed = (origin) => {
     if (!origin) return true;
-    if (allowedOrigins.includes(origin)) return true;
-    if (/^https?:\/\/localhost(:\d+)?$/.test(origin)) return true;
-    if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(origin)) return true;
+    const cleanOrigin = origin.trim().replace(/\/+$/, "");
+    if (allowedOrigins.includes(cleanOrigin)) return true;
+    if (/^https?:\/\/localhost(:\d+)?$/.test(cleanOrigin)) return true;
+    if (/^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(cleanOrigin)) return true;
+    if (/^https:\/\/[a-zA-Z0-9-]+\.onrender\.com$/.test(cleanOrigin)) return true;
     return false;
 };
 
