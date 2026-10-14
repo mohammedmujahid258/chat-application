@@ -7,6 +7,7 @@ import VoiceMessagePlayer from "../components/VoiceMessagePlayer.jsx";
 import VoiceRecorder from "../components/VoiceRecorder.jsx";
 import { CreateGroupModal } from "../components/CreateGroupModal.jsx";
 import { GroupInfoModal } from "../components/GroupInfoModal.jsx";
+import { AddContactModal } from "../components/AddContactModal.jsx";
 import {
   Search,
   Phone,
@@ -15,6 +16,7 @@ import {
   User as UserIcon,
   Users,
   Plus,
+  UserPlus,
   Info,
   Paperclip,
   X,
@@ -47,6 +49,9 @@ export const Chat = () => {
 
   // Contacts & Direct Chats
   const [users, setUsers] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [loadingContacts, setLoadingContacts] = useState(true);
+  const [showAddContactModal, setShowAddContactModal] = useState(false);
   const [unreadSenders, setUnreadSenders] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUser, setSelectedUser] = useState(null);
@@ -155,30 +160,65 @@ export const Chat = () => {
   };
 
   // Fetch available contacts/users
-  useEffect(() => {
-    const fetchUsers = async () => {
-      try {
-        setLoadingUsers(true);
-        const res = await API.get("/users");
-        setUsers(res.data.users || []);
-        if (res.data.unreadSenders && Array.isArray(res.data.unreadSenders)) {
-          setUnreadSenders(new Set(res.data.unreadSenders));
-        }
-        if (res.data.lastMessages && typeof res.data.lastMessages === "object") {
-          setLastMessages((prev) => ({
-            ...res.data.lastMessages,
-            ...prev,
-          }));
-        }
-      } catch (err) {
-        console.error("Failed to load users:", err);
-      } finally {
-        setLoadingUsers(false);
+  const fetchUsers = async () => {
+    try {
+      setLoadingUsers(true);
+      const res = await API.get("/users");
+      setUsers(res.data.users || []);
+      if (res.data.unreadSenders && Array.isArray(res.data.unreadSenders)) {
+        setUnreadSenders(new Set(res.data.unreadSenders));
       }
-    };
+      if (res.data.lastMessages && typeof res.data.lastMessages === "object") {
+        setLastMessages((prev) => ({
+          ...res.data.lastMessages,
+          ...prev,
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to load users:", err);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
 
+  // Fetch saved contacts
+  const fetchContacts = async () => {
+    try {
+      setLoadingContacts(true);
+      const res = await API.get("/users/contacts");
+      const loaded = res.data?.contacts || (Array.isArray(res.data) ? res.data : []);
+      setContacts(loaded);
+      if (res.data?.lastMessages && typeof res.data.lastMessages === "object") {
+        setLastMessages((prev) => ({
+          ...res.data.lastMessages,
+          ...prev,
+        }));
+      }
+    } catch (err) {
+      console.error("Failed to load contacts:", err);
+    } finally {
+      setLoadingContacts(false);
+    }
+  };
+
+  useEffect(() => {
     fetchUsers();
+    fetchContacts();
   }, []);
+
+  const handleRemoveContact = async (contact) => {
+    const cId = getId(contact);
+    const name = contact?.name || "this contact";
+    if (!window.confirm(`Are you sure you want to remove ${name} from your contacts?`)) return;
+
+    try {
+      await API.delete(`/users/contacts/${cId}`);
+      setContacts((prev) => prev.filter((c) => getId(c) !== cId));
+    } catch (err) {
+      console.error("Failed to remove contact:", err);
+      alert(err.response?.data?.message || "Failed to remove contact. Please try again.");
+    }
+  };
 
   // Fetch user groups
   const fetchGroups = async () => {
@@ -956,6 +996,22 @@ export const Chat = () => {
     }
   };
 
+  // Filter saved contacts by search query & sort by recent message
+  const filteredContacts = contacts
+    .filter(
+      (c) =>
+        c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.email?.toLowerCase().includes(searchQuery.toLowerCase())
+    )
+    .sort((a, b) => {
+      const aTime = new Date(lastMessages[getId(a)]?.createdAt || 0).getTime();
+      const bTime = new Date(lastMessages[getId(b)]?.createdAt || 0).getTime();
+      if (bTime !== aTime) {
+        return bTime - aTime;
+      }
+      return (a.name || "").localeCompare(b.name || "");
+    });
+
   // Filter contacts by search query & sort by recent message
   const filteredUsers = users
     .filter(
@@ -1184,32 +1240,46 @@ export const Chat = () => {
           </button>
         </div>
 
-        {/* Search Bar with clear button */}
+        {/* Search Bar with clear and Add Contact button */}
         <div className="p-3 border-b border-[var(--border-subtle)] bg-[var(--bg-sidebar)]">
-          <div className="relative">
-            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)]" />
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-9 pr-8 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-emerald-500 transition-colors"
-            />
-            {searchQuery && (
-              <button
-                type="button"
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-0.5 cursor-pointer"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-secondary)]" />
+              <input
+                type="text"
+                placeholder={sidebarTab === "direct" ? "Search contacts..." : "Search conversations..."}
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-9 pr-8 py-2 rounded-xl bg-[var(--bg-input)] border border-[var(--border-subtle)] text-xs text-[var(--text-primary)] placeholder-[var(--text-secondary)] focus:outline-none focus:border-emerald-500 transition-colors"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] p-0.5 cursor-pointer"
+                  title="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowAddContactModal(true)}
+              className="p-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+              title="Add New Contact"
+              aria-label="Add New Contact"
+            >
+              <UserPlus className="h-4 w-4" />
+              <span className="hidden sm:inline">Add Contact</span>
+            </button>
           </div>
         </div>
 
         {/* Conversation List Scroll Area */}
         <div className="flex-1 overflow-y-auto divide-y divide-[var(--border-subtle)]">
-          {loadingUsers && loadingGroups ? (
+          {loadingUsers && loadingGroups && loadingContacts ? (
             <div className="p-8 text-center text-xs text-[var(--text-secondary)] flex flex-col items-center gap-2">
               <Loader2 className="h-5 w-5 animate-spin text-emerald-500" />
               <span>Loading conversations...</span>
@@ -1222,11 +1292,36 @@ export const Chat = () => {
               filteredGroups.map((g) => renderGroupItem(g))
             )
           ) : sidebarTab === "direct" ? (
-            /* Direct Contacts Only */
-            filteredUsers.length === 0 ? (
-              <div className="p-8 text-center text-xs text-[var(--text-secondary)]">No contacts found</div>
+            /* Direct Contacts Only (Saved Contacts) */
+            loadingContacts && contacts.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[var(--text-secondary)] flex flex-col items-center gap-2">
+                <Loader2 className="h-5 w-5 animate-spin text-emerald-500" />
+                <span>Loading contacts...</span>
+              </div>
+            ) : filteredContacts.length === 0 ? (
+              <div className="p-8 text-center text-xs text-[var(--text-secondary)] flex flex-col items-center">
+                <div className="p-3 rounded-2xl bg-[var(--bg-input)] text-emerald-500 mb-2.5">
+                  <UserPlus className="h-6 w-6" />
+                </div>
+                <p className="font-semibold text-[var(--text-primary)]">
+                  {searchQuery ? "No matching contacts" : "No saved contacts"}
+                </p>
+                <p className="text-[11px] text-[var(--text-secondary)] mt-1 max-w-[220px]">
+                  {searchQuery
+                    ? `No contacts found matching "${searchQuery}".`
+                    : "Find users by name or email and add them to your contacts list."}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowAddContactModal(true)}
+                  className="mt-3.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md shadow-emerald-600/20"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  <span>Add Contact</span>
+                </button>
+              </div>
             ) : (
-              filteredUsers.map((u) => renderUserItem(u))
+              filteredContacts.map((u) => renderUserItem(u, true))
             )
           ) : sidebarTab === "unread" ? (
             /* Unread Conversations Only */
@@ -1286,6 +1381,20 @@ export const Chat = () => {
           {renderInfoDrawerContent()}
         </aside>
       )}
+
+      {/* Add Contact Modal */}
+      <AddContactModal
+        isOpen={showAddContactModal}
+        onClose={() => setShowAddContactModal(false)}
+        existingContactIds={contacts.map((c) => getId(c))}
+        onContactAdded={(newContact) => {
+          setContacts((prev) => [
+            newContact,
+            ...prev.filter((c) => getId(c) !== getId(newContact)),
+          ]);
+          fetchContacts();
+        }}
+      />
 
       {/* Create Group Modal */}
       <CreateGroupModal
@@ -1372,7 +1481,7 @@ export const Chat = () => {
   // RENDER HELPERS: List Items & Views
   // ========================================================
 
-  function renderUserItem(u) {
+  function renderUserItem(u, isContactItem = false) {
     const uId = getId(u);
     const isSelected = selectedUser && getId(selectedUser) === uId;
     const isOnline = onlineUsers.includes(uId);
@@ -1381,11 +1490,18 @@ export const Chat = () => {
     const isMine = lastMsg && getId(lastMsg.sender) === getId(myId);
 
     return (
-      <button
+      <div
         key={uId}
-        type="button"
+        role="button"
+        tabIndex={0}
         onClick={() => handleSelectUser(u)}
-        className={`w-full p-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer relative ${
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleSelectUser(u);
+          }
+        }}
+        className={`w-full p-3.5 flex items-center gap-3 text-left transition-colors cursor-pointer relative group ${
           isSelected
             ? "bg-[var(--bg-active)] border-l-3 border-emerald-500"
             : "hover:bg-[var(--bg-hover)]"
@@ -1447,14 +1563,31 @@ export const Chat = () => {
               </span>
             </p>
 
-            {hasUnread && (
-              <span className="h-4.5 min-w-[18px] px-1 rounded-full bg-emerald-500 text-[10px] text-white font-bold flex items-center justify-center shrink-0">
-                1
-              </span>
-            )}
+            <div className="flex items-center gap-1.5 shrink-0">
+              {hasUnread && (
+                <span className="h-4.5 min-w-[18px] px-1 rounded-full bg-emerald-500 text-[10px] text-white font-bold flex items-center justify-center shrink-0">
+                  1
+                </span>
+              )}
+
+              {isContactItem && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleRemoveContact(u);
+                  }}
+                  className="p-1.5 rounded-lg text-[var(--text-secondary)] hover:text-rose-400 hover:bg-rose-500/10 opacity-70 group-hover:opacity-100 transition-all cursor-pointer"
+                  title="Remove from contacts"
+                  aria-label={`Remove ${u.name} from contacts`}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
-      </button>
+      </div>
     );
   }
 
@@ -2551,6 +2684,39 @@ export const Chat = () => {
               <Video className="h-3.5 w-3.5" />
               <span>Video</span>
             </button>
+
+            {!isGroup &&
+              (contacts.some((c) => getId(c) === getId(selectedUser)) ? (
+                <button
+                  type="button"
+                  onClick={() => handleRemoveContact(selectedUser)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-semibold transition-colors cursor-pointer"
+                  title="Remove from contacts"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Remove</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    try {
+                      const res = await API.post(`/users/contacts/${getId(selectedUser)}`);
+                      const added = res.data?.contact || selectedUser;
+                      setContacts((prev) => [added, ...prev.filter((c) => getId(c) !== getId(added))]);
+                      fetchContacts();
+                      alert(`Added ${selectedUser.name} to contacts!`);
+                    } catch (err) {
+                      alert(err.response?.data?.message || "Failed to add contact");
+                    }
+                  }}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-semibold transition-colors cursor-pointer"
+                  title="Add to contacts"
+                >
+                  <UserPlus className="h-3.5 w-3.5" />
+                  <span>Add</span>
+                </button>
+              ))}
           </div>
         </div>
 

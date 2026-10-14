@@ -164,3 +164,229 @@ export const updateProfile = async (req, res) => {
     }
 };
 
+/**
+ * Search users by name or email (excluding current user)
+ * GET /api/users/search?q=value
+ */
+export const searchUsers = async (req, res) => {
+    try {
+        const loggedInUserId = req.userId;
+        const query = (req.query.q || req.query.query || "").trim();
+
+        if (!query) {
+            return res.status(200).json({ users: [] });
+        }
+
+        // Escape regex special characters to prevent regex injection attacks
+        const safeQuery = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const searchRegex = new RegExp(safeQuery, "i");
+
+        const matchedUsers = await User.find({
+            _id: { $ne: loggedInUserId },
+            $or: [
+                { name: searchRegex },
+                { email: searchRegex },
+            ],
+        })
+            .select("_id name email profilePic isOnline lastSeen")
+            .limit(25);
+
+        const safeUsers = matchedUsers.map((u) => ({
+            _id: u._id,
+            name: u.name,
+            email: u.email,
+            profilePic: u.profilePic || "",
+            isOnline: isUserOnline(u._id),
+            lastSeen: u.lastSeen,
+        }));
+
+        return res.status(200).json({ users: safeUsers });
+    } catch (error) {
+        console.error("Search users error:", error);
+        return res.status(500).json({
+            message: "Server error",
+        });
+    }
+};
+
+/**
+ * Get logged-in user's saved contacts
+ * GET /api/users/contacts
+ */
+export const getContacts = async (req, res) => {
+    try {
+        const loggedInUserId = req.userId;
+        const loggedInObjectId = new mongoose.Types.ObjectId(String(loggedInUserId));
+
+        const user = await User.findById(loggedInObjectId)
+            .populate({
+                path: "contacts",
+                select: "_id name email profilePic lastSeen isOnline",
+            });
+
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const validContacts = (user.contacts || []).filter(Boolean);
+
+        // Map populated contacts and attach real-time online status
+        const contactsWithOnline = validContacts.map((c) => {
+            const cObj = c.toObject ? c.toObject() : c;
+            return {
+                ...cObj,
+                isOnline: isUserOnline(cObj._id),
+            };
+        });
+
+        // Fetch latest messages with these contacts for display & ordering
+        const contactIds = contactsWithOnline.map((c) => c._id);
+        const lastMessagesAggregation = await Message.aggregate([
+            {
+                $match: {
+                    $or: [
+                        { sender: loggedInObjectId, receiver: { $in: contactIds } },
+                        { receiver: loggedInObjectId, sender: { $in: contactIds } },
+                    ],
+                },
+            },
+            {
+                $sort: { createdAt: -1 },
+            },
+            {
+                $group: {
+                    _id: {
+                        $cond: [
+                            { $eq: ["$sender", loggedInObjectId] },
+                            "$receiver",
+                            "$sender",
+                        ],
+                    },
+                    lastMessage: { $first: "$$ROOT" },
+                },
+            },
+        ]);
+
+        const lastMessagesMap = {};
+        lastMessagesAggregation.forEach((item) => {
+            if (item._id) {
+                lastMessagesMap[item._id.toString()] = item.lastMessage;
+            }
+        });
+
+        // Sort contacts by latest message timestamp descending, then alphabetically by name
+        contactsWithOnline.sort((a, b) => {
+            const aTime = new Date(lastMessagesMap[a._id.toString()]?.createdAt || 0).getTime();
+            const bTime = new Date(lastMessagesMap[b._id.toString()]?.createdAt || 0).getTime();
+            if (bTime !== aTime) {
+                return bTime - aTime;
+            }
+            return (a.name || "").localeCompare(b.name || "");
+        });
+
+        return res.status(200).json({
+            contacts: contactsWithOnline,
+            lastMessages: lastMessagesMap,
+        });
+    } catch (error) {
+        console.error("Get contacts error:", error);
+        return res.status(500).json({
+            message: "Server error",
+        });
+    }
+};
+
+/**
+ * Add a contact for the logged-in user
+ * POST /api/users/contacts/:contactId
+ */
+export const addContact = async (req, res) => {
+    try {
+        const loggedInUserId = req.userId;
+        const { contactId } = req.params;
+
+        if (!contactId || !mongoose.Types.ObjectId.isValid(contactId)) {
+            return res.status(400).json({ message: "Invalid contact ID format" });
+        }
+
+        if (String(contactId) === String(loggedInUserId)) {
+            return res.status(400).json({ message: "You cannot add yourself as a contact" });
+        }
+
+        // Verify that the user being added exists
+        const contactUser = await User.findById(contactId).select("_id name email profilePic lastSeen isOnline");
+        if (!contactUser) {
+            return res.status(404).json({ message: "User not found" });
+        }
+
+        const user = await User.findById(loggedInUserId);
+        if (!user) {
+            return res.status(404).json({ message: "Current user not found" });
+        }
+
+        // Check for duplicates
+        const isAlreadyAdded = (user.contacts || []).some(
+            (c) => String(c._id || c) === String(contactId)
+        );
+
+        if (isAlreadyAdded) {
+            return res.status(409).json({ message: "User is already in your contacts" });
+        }
+
+        user.contacts = user.contacts || [];
+        user.contacts.push(new mongoose.Types.ObjectId(String(contactId)));
+        await user.save();
+
+        const savedContact = {
+            ...contactUser.toObject(),
+            isOnline: isUserOnline(contactUser._id),
+        };
+
+        return res.status(201).json({
+            message: "Contact added successfully",
+            contact: savedContact,
+        });
+    } catch (error) {
+        console.error("Add contact error:", error);
+        return res.status(500).json({
+            message: "Server error",
+        });
+    }
+};
+
+/**
+ * Remove a contact for the logged-in user
+ * DELETE /api/users/contacts/:contactId
+ */
+export const removeContact = async (req, res) => {
+    try {
+        const loggedInUserId = req.userId;
+        const { contactId } = req.params;
+
+        if (!contactId || !mongoose.Types.ObjectId.isValid(contactId)) {
+            return res.status(400).json({ message: "Invalid contact ID format" });
+        }
+
+        const user = await User.findById(loggedInUserId);
+        if (!user) {
+            return res.status(404).json({ message: "Current user not found" });
+        }
+
+        user.contacts = (user.contacts || []).filter(
+            (c) => String(c._id || c) !== String(contactId)
+        );
+        await user.save();
+
+        return res.status(200).json({
+            message: "Contact removed successfully",
+            contactId,
+        });
+    } catch (error) {
+        console.error("Remove contact error:", error);
+        return res.status(500).json({
+            message: "Server error",
+        });
+    }
+};
+
+
