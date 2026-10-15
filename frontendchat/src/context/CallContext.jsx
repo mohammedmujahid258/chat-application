@@ -62,6 +62,7 @@ export const CallProvider = ({ children }) => {
   const isGroupCallRef = useRef(false);
   const groupCallInfoRef = useRef(null);
   const callStateRef = useRef("idle");
+  const callTypeRef = useRef(callType);
   const callTimeoutRef = useRef(null);
   const activeNotificationRef = useRef(null);
   const titleIntervalRef = useRef(null);
@@ -77,6 +78,10 @@ export const CallProvider = ({ children }) => {
   useEffect(() => {
     callStateRef.current = callState;
   }, [callState]);
+
+  useEffect(() => {
+    callTypeRef.current = callType;
+  }, [callType]);
 
   useEffect(() => {
     callIdRef.current = currentCallId;
@@ -250,6 +255,7 @@ export const CallProvider = ({ children }) => {
               icon: caller?.profilePic || "/favicon.svg",
               tag: "chatsphere-incoming-call",
               requireInteraction: true,
+              silent: true,
             });
             notif.onclick = () => {
               window.focus();
@@ -751,10 +757,11 @@ export const CallProvider = ({ children }) => {
       setGroupCallInfo(null);
       setCurrentCallId(callId);
       setCallType(incomingType);
+      callTypeRef.current = incomingType;
       setCallPeer(caller);
+      callPeerRef.current = caller;
       setIsIncoming(true);
       setCallState("incoming");
-      startIncomingAlerts(caller, incomingType, false);
     };
 
     // Incoming Group Call received
@@ -768,19 +775,22 @@ export const CallProvider = ({ children }) => {
     }) => {
       if (callStateRef.current !== "idle") return;
 
+      const chosenType = incomingType || "voice";
       setIsGroupCall(true);
       setGroupCallInfo({ groupId, groupName, groupPic, caller });
       setCurrentCallId(callId);
-      setCallType(incomingType || "voice");
-      setCallPeer({
+      setCallType(chosenType);
+      callTypeRef.current = chosenType;
+      const peerData = {
         _id: groupId,
         name: groupName,
         profilePic: groupPic,
         callerName: caller?.name,
-      });
+      };
+      setCallPeer(peerData);
+      callPeerRef.current = peerData;
       setIsIncoming(true);
       setCallState("incoming");
-      startIncomingAlerts(caller, incomingType || "voice", true);
     };
 
     // Caller receives ringing notification
@@ -801,7 +811,7 @@ export const CallProvider = ({ children }) => {
         try {
           const offer = await pc.createOffer({
             offerToReceiveAudio: true,
-            offerToReceiveVideo: callType === "video",
+            offerToReceiveVideo: callTypeRef.current === "video",
           });
           await pc.setLocalDescription(offer);
 
@@ -872,7 +882,7 @@ export const CallProvider = ({ children }) => {
         const pc = createGroupPeerConnection(userId, callId, userInfo);
         const offer = await pc.createOffer({
           offerToReceiveAudio: true,
-          offerToReceiveVideo: callType === "video",
+          offerToReceiveVideo: callTypeRef.current === "video",
         });
         await pc.setLocalDescription(offer);
 
@@ -963,7 +973,6 @@ export const CallProvider = ({ children }) => {
     socket.on("groupCall:userLeft", handleGroupUserLeft);
 
     return () => {
-      stopIncomingAlerts();
       socket.off("call:incoming", handleIncomingCall);
       socket.off("call:ringing", handleCallRinging);
       socket.off("call:accepted", handleCallAccepted);
@@ -982,23 +991,23 @@ export const CallProvider = ({ children }) => {
   }, [
     socket,
     authUser,
-    callType,
     myId,
     createPeerConnection,
     createGroupPeerConnection,
     startCallTimer,
     endCall,
     resetCall,
-    startIncomingAlerts,
-    stopIncomingAlerts,
   ]);
 
-  // Clean up alerts if CallProvider unmounts
+  // Declarative incoming call ringtone lifecycle: loops continuously while incoming call screen is active
   useEffect(() => {
-    return () => {
-      stopIncomingAlerts();
-    };
-  }, [stopIncomingAlerts]);
+    if (callState === "incoming" && isIncoming) {
+      startIncomingAlerts(callPeerRef.current, callTypeRef.current, isGroupCallRef.current);
+      return () => {
+        stopIncomingAlerts();
+      };
+    }
+  }, [callState, isIncoming, startIncomingAlerts, stopIncomingAlerts]);
 
   return (
     <CallContext.Provider

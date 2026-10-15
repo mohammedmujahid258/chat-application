@@ -1,6 +1,6 @@
 /**
  * Ringtone Service for ChatSphere
- * Handles incoming call audio playback, loop repetition, autoplay policy detection,
+ * Manages incoming call audio playback, loop repetition, autoplay policy detection,
  * Web Audio API synthesizer fallback, and mute control.
  */
 
@@ -25,16 +25,20 @@ class RingtoneService {
       this.audio = new Audio("/sounds/ringtone.wav");
       this.audio.loop = true;
       this.audio.preload = "auto";
-      this.audio.volume = 0.9;
+      this.audio.volume = 0.95;
 
-      // In case of error loading .wav, fall back to .mp3
-      this.audio.addEventListener("error", () => {
-        console.warn("Ringtone WAV load error, falling back to MP3");
-        if (this.audio && !this.audio.src.endsWith("ringtone.mp3")) {
-          this.audio.src = "/sounds/ringtone.mp3";
-          if (this.isPlaying && !this.isMuted) {
-            this.audio.play().catch((e) => console.warn("Fallback audio play error:", e));
-          }
+      // Backup loop listener if browser fails native loop attribute
+      this.audio.addEventListener("ended", () => {
+        if (this.isPlaying && !this.isMuted && this.audio) {
+          this.audio.currentTime = 0;
+          this.audio.play().catch((e) => console.warn("Ringtone loop replay error:", e));
+        }
+      });
+
+      this.audio.addEventListener("error", (e) => {
+        console.warn("Ringtone audio element error, falling back to Web Audio synth:", e);
+        if (this.isPlaying && !this.isMuted) {
+          this.startSynthFallback();
         }
       });
     }
@@ -69,29 +73,29 @@ class RingtoneService {
         E6: 1318.51,
         F_sharp6: 1479.98,
         G_sharp6: 1661.22,
+        A6: 1760.0,
+        B6: 1975.53,
       };
 
       const sequence = [
-        [0.00, [notes.G_sharp5, notes.E6], 0.38],
-        [0.22, [notes.B5], 0.32],
-        [0.44, [notes.E5, notes.G_sharp5], 0.35],
-        [0.66, [notes.C_sharp6], 0.32],
-        [0.88, [notes.D_sharp6], 0.32],
-        [1.10, [notes.B5, notes.E6], 0.45],
-        [1.42, [notes.G_sharp5, notes.C_sharp6], 0.55],
-        [2.10, [notes.A5, notes.F_sharp6], 0.38],
-        [2.32, [notes.C_sharp6], 0.32],
-        [2.54, [notes.F_sharp5, notes.A5], 0.35],
-        [2.76, [notes.D_sharp6], 0.32],
-        [2.98, [notes.E6], 0.32],
-        [3.20, [notes.C_sharp6, notes.F_sharp6], 0.45],
-        [3.52, [notes.B5, notes.G_sharp6], 0.70],
+        [0.00, [notes.G_sharp5, notes.E6], 0.35],
+        [0.20, [notes.B5, notes.G_sharp6], 0.30],
+        [0.40, [notes.E5, notes.B5], 0.30],
+        [0.60, [notes.C_sharp6, notes.G_sharp6], 0.30],
+        [0.80, [notes.D_sharp6, notes.B6], 0.30],
+        [1.00, [notes.B5, notes.E6], 0.40],
+        [1.30, [notes.G_sharp5, notes.C_sharp6], 0.50],
+        [1.80, [notes.A5, notes.F_sharp6], 0.35],
+        [2.00, [notes.C_sharp6, notes.A6], 0.30],
+        [2.20, [notes.F_sharp5, notes.C_sharp6], 0.30],
+        [2.40, [notes.D_sharp6, notes.B6], 0.30],
+        [2.60, [notes.E6, notes.G_sharp6], 0.30],
+        [2.80, [notes.C_sharp6, notes.F_sharp6], 0.40],
+        [3.10, [notes.B5, notes.E6, notes.G_sharp6], 0.75],
       ];
 
       const playPhrase = () => {
         if (!this.isPlaying || this.isMuted) return;
-
-        const startTime = ctx.currentTime + 0.05;
 
         sequence.forEach(([delay, freqs, decay]) => {
           const tid = setTimeout(() => {
@@ -105,19 +109,18 @@ class RingtoneService {
               osc.type = "sine";
               osc.frequency.setValueAtTime(freq, t);
 
-              // Harmonic
+              // 2nd Harmonic for warm timbre
               const osc2 = ctx.createOscillator();
               const gain2 = ctx.createGain();
               osc2.type = "triangle";
               osc2.frequency.setValueAtTime(freq * 2, t);
 
-              // Envelope
               gain.gain.setValueAtTime(0.0001, t);
-              gain.gain.exponentialRampToValueAtTime(0.3, t + 0.005);
+              gain.gain.exponentialRampToValueAtTime(0.35, t + 0.004);
               gain.gain.exponentialRampToValueAtTime(0.0001, t + decay);
 
               gain2.gain.setValueAtTime(0.0001, t);
-              gain2.gain.exponentialRampToValueAtTime(0.08, t + 0.005);
+              gain2.gain.exponentialRampToValueAtTime(0.1, t + 0.004);
               gain2.gain.exponentialRampToValueAtTime(0.0001, t + decay * 0.7);
 
               osc.connect(gain);
@@ -137,7 +140,7 @@ class RingtoneService {
       };
 
       playPhrase();
-      this.synthInterval = setInterval(playPhrase, 4800);
+      this.synthInterval = setInterval(playPhrase, 4500);
     } catch (e) {
       console.warn("Web Audio API synth error:", e);
     }
@@ -161,7 +164,8 @@ class RingtoneService {
   }
 
   /**
-   * Start playing incoming call ringtone.
+   * Start playing incoming call ringtone continuously.
+   * If already playing, maintains playback without restarting.
    * @param {Object} options
    * @param {Function} options.onAutoplayBlocked - Callback when autoplay policy prevents instant audio playback
    */
@@ -177,11 +181,14 @@ class RingtoneService {
     }
 
     const audio = this.getAudioElement();
-    if (!audio) return;
+    if (!audio) {
+      this.startSynthFallback();
+      return;
+    }
 
     audio.currentTime = 0;
     audio.loop = true;
-    audio.volume = 0.9;
+    audio.volume = 0.95;
 
     const playPromise = audio.play();
 
@@ -204,7 +211,7 @@ class RingtoneService {
             }
             this.attachInteractionListener();
           } else {
-            // If file playback had a decode or network issue, start synth fallback
+            // Audio file decode or network issue: use Web Audio API synth fallback
             this.startSynthFallback();
           }
         });
@@ -238,7 +245,7 @@ class RingtoneService {
   }
 
   /**
-   * Explicitly unlock and play audio upon user interaction (e.g. clicking "Enable Sound" button)
+   * Explicitly unlock and play audio upon user interaction (e.g. clicking "Enable Sound" button or modal)
    */
   unlockAudio() {
     if (!this.isPlaying) return;
@@ -253,6 +260,8 @@ class RingtoneService {
 
     const audio = this.getAudioElement();
     if (audio) {
+      audio.currentTime = 0;
+      audio.loop = true;
       audio.play().catch((err) => {
         console.warn("Unlocking audio with HTMLAudioElement failed, falling back to Web Audio synth:", err);
         this.startSynthFallback();
@@ -297,6 +306,8 @@ class RingtoneService {
       const audio = this.getAudioElement();
       if (audio) {
         audio.play().catch(() => this.startSynthFallback());
+      } else {
+        this.startSynthFallback();
       }
     }
     return this.isMuted;
@@ -317,4 +328,7 @@ class RingtoneService {
 
 // Export singleton instance
 export const ringtoneService = new RingtoneService();
+if (typeof window !== "undefined") {
+  window.__ringtoneService = ringtoneService;
+}
 export default ringtoneService;
