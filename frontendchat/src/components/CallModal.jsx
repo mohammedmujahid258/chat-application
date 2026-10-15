@@ -11,6 +11,9 @@ import {
   Maximize2,
   Minimize2,
   VolumeX,
+  Volume2,
+  Bell,
+  BellOff,
   Users,
   ShieldCheck,
 } from "lucide-react";
@@ -90,11 +93,15 @@ export const CallModal = () => {
     isGroupCall,
     groupCallInfo,
     groupParticipants,
+    isRingtoneBlocked,
+    isRingtoneMuted,
     acceptCall,
     rejectCall,
     endCall,
     toggleMute,
     toggleCamera,
+    unlockRingtone,
+    toggleRingtoneMute,
   } = useCall();
 
   const [isMinimized, setIsMinimized] = useState(false);
@@ -139,12 +146,60 @@ export const CallModal = () => {
       <div
         role="dialog"
         aria-modal="true"
+        onClick={() => {
+          if (isRingtoneBlocked) unlockRingtone();
+        }}
         className="fixed inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200"
       >
         <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-700/80 p-7 shadow-2xl flex flex-col items-center text-center relative overflow-hidden">
           {/* Animated Background Ring Glow */}
           <div className="absolute -top-16 -left-16 w-48 h-48 bg-emerald-500/20 rounded-full blur-3xl pointer-events-none" />
           <div className="absolute -bottom-16 -right-16 w-48 h-48 bg-teal-500/20 rounded-full blur-3xl pointer-events-none" />
+
+          {/* Top Bar: Call Type Badge & Silence/Mute Ringtone Button */}
+          <div className="w-full flex items-center justify-between mb-2 z-10">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold">
+              {callType === "video" ? <Video className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}
+              <span>
+                {isGroupCall
+                  ? `Group ${callType === "video" ? "Video" : "Voice"}`
+                  : `${callType === "video" ? "HD Video Call" : "Voice Call"}`}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleRingtoneMute();
+              }}
+              className={`p-2 rounded-full transition-colors cursor-pointer border ${
+                isRingtoneMuted
+                  ? "bg-rose-500/20 border-rose-500/50 text-rose-300 hover:bg-rose-500/30"
+                  : "bg-slate-800/80 border-slate-700/80 text-slate-300 hover:text-white"
+              }`}
+              title={isRingtoneMuted ? "Unmute ringtone" : "Silence ringtone"}
+              aria-label={isRingtoneMuted ? "Unmute ringtone" : "Silence ringtone"}
+            >
+              {isRingtoneMuted ? <BellOff className="h-4 w-4 text-rose-400" /> : <Bell className="h-4 w-4" />}
+            </button>
+          </div>
+
+          {/* Autoplay Sound Prompt if blocked by browser policy */}
+          {isRingtoneBlocked && !isRingtoneMuted && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                unlockRingtone();
+              }}
+              className="mt-2 mb-3 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/50 text-amber-300 text-xs font-semibold flex items-center gap-2 animate-bounce cursor-pointer hover:bg-amber-500/30 transition-all shadow-lg shadow-amber-500/10 z-10"
+              title="Browser silenced audio — Click to enable ringtone"
+            >
+              <Volume2 className="h-3.5 w-3.5 text-amber-400" />
+              <span>Tap to enable ringtone sound</span>
+            </button>
+          )}
 
           {/* Caller Avatar with Pulsing Ring */}
           <div className="relative mb-5 mt-2">
@@ -167,21 +222,15 @@ export const CallModal = () => {
           </div>
 
           <h3 className="text-xl font-bold text-white mb-1">{callPeer?.name}</h3>
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-semibold mb-2">
-            {callType === "video" ? <Video className="h-3.5 w-3.5" /> : <Phone className="h-3.5 w-3.5" />}
-            <span>
-              {isGroupCall
-                ? `Group ${callType === "video" ? "Video" : "Voice"} Call`
-                : `${callType === "video" ? "HD Video" : "Voice"} Call`}
-            </span>
-          </div>
 
           {isGroupCall && (groupCallInfo?.caller?.name || callPeer?.callerName) ? (
             <p className="text-xs text-slate-400 mb-6">
               Started by {groupCallInfo?.caller?.name || callPeer?.callerName}
             </p>
           ) : (
-            <p className="text-xs text-slate-400 mb-6">Incoming call...</p>
+            <p className="text-xs text-slate-400 mb-6">
+              {isRingtoneMuted ? "Incoming call (silenced)..." : "Incoming call ringing..."}
+            </p>
           )}
 
           {/* Action Buttons: Accept / Reject */}
@@ -190,7 +239,10 @@ export const CallModal = () => {
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
-                onClick={rejectCall}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  rejectCall();
+                }}
                 className="h-14 w-14 rounded-full bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center shadow-lg shadow-rose-600/40 hover:scale-105 active:scale-95 transition-all cursor-pointer"
                 title="Decline"
                 aria-label="Decline call"
@@ -204,7 +256,10 @@ export const CallModal = () => {
             <div className="flex flex-col items-center gap-2">
               <button
                 type="button"
-                onClick={acceptCall}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  acceptCall();
+                }}
                 className="h-14 w-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-600/40 hover:scale-105 active:scale-95 transition-all cursor-pointer animate-pulse"
                 title="Accept"
                 aria-label="Accept call"

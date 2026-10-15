@@ -9,6 +9,7 @@ import {
 import { useAuth } from "./AuthContext.jsx";
 import { useSocket } from "./SocketContext.jsx";
 import API from "../services/api.js";
+import ringtoneService from "../services/ringtone.js";
 
 const CallContext = createContext(null);
 
@@ -60,10 +61,23 @@ export const CallProvider = ({ children }) => {
   const callPeerRef = useRef(null);
   const isGroupCallRef = useRef(false);
   const groupCallInfoRef = useRef(null);
+  const callStateRef = useRef("idle");
+  const callTimeoutRef = useRef(null);
+  const activeNotificationRef = useRef(null);
+  const titleIntervalRef = useRef(null);
+  const originalTitleRef = useRef(typeof document !== "undefined" ? document.title : "ChatSphere");
+
+  // Ringtone and notification state
+  const [isRingtoneBlocked, setIsRingtoneBlocked] = useState(false);
+  const [isRingtoneMuted, setIsRingtoneMuted] = useState(false);
 
   const myId = authUser?._id || authUser?.id;
 
   // Sync refs with state
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+
   useEffect(() => {
     callIdRef.current = currentCallId;
   }, [currentCallId]);
@@ -146,9 +160,38 @@ export const CallProvider = ({ children }) => {
     setIsRemoteCameraOff(false);
   }, []);
 
+  // Stop ringtone audio, tab title flash, notifications, and incoming timeouts
+  const stopIncomingAlerts = useCallback(() => {
+    ringtoneService.stop();
+    setIsRingtoneBlocked(false);
+
+    if (activeNotificationRef.current) {
+      try {
+        activeNotificationRef.current.close();
+      } catch (e) {
+        // ignore
+      }
+      activeNotificationRef.current = null;
+    }
+
+    if (titleIntervalRef.current) {
+      clearInterval(titleIntervalRef.current);
+      titleIntervalRef.current = null;
+      if (typeof document !== "undefined") {
+        document.title = originalTitleRef.current || "ChatSphere";
+      }
+    }
+
+    if (callTimeoutRef.current) {
+      clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = null;
+    }
+  }, []);
+
   // Full reset to idle
   const resetCall = useCallback(
     (reason = null) => {
+      stopIncomingAlerts();
       cleanupMedia();
       if (reason) {
         setCallError(reason);
@@ -164,8 +207,81 @@ export const CallProvider = ({ children }) => {
       callDurationRef.current = 0;
       callStartTimeRef.current = null;
     },
-    [cleanupMedia]
+    [cleanupMedia, stopIncomingAlerts]
   );
+
+  // Start incoming ringtone, tab title animation, and desktop notifications
+  const startIncomingAlerts = useCallback(
+    (caller, type = "voice", isGroup = false) => {
+      // 1. Play local incoming call ringtone
+      ringtoneService.start({
+        onAutoplayBlocked: (blocked) => {
+          setIsRingtoneBlocked(blocked);
+        },
+      });
+
+      // 2. Animate browser tab title for visibility when app is in another tab
+      if (typeof document !== "undefined") {
+        if (titleIntervalRef.current) clearInterval(titleIntervalRef.current);
+        let toggle = false;
+        const callerName = caller?.name || "Someone";
+        titleIntervalRef.current = setInterval(() => {
+          document.title = toggle
+            ? `📞 Incoming ${type === "video" ? "Video" : "Voice"} Call...`
+            : `✨ ${callerName} is calling...`;
+          toggle = !toggle;
+        }, 1000);
+      }
+
+      // 3. Desktop HTML5 notification if tab is in background or permitted
+      if (typeof window !== "undefined" && "Notification" in window) {
+        if (Notification.permission === "default") {
+          Notification.requestPermission().catch(() => {});
+        } else if (Notification.permission === "granted") {
+          try {
+            if (activeNotificationRef.current) {
+              activeNotificationRef.current.close();
+            }
+            const callLabel = isGroup
+              ? `Group ${type === "video" ? "Video" : "Voice"} Call`
+              : `${type === "video" ? "HD Video" : "Voice"} Call`;
+            const notif = new Notification(`Incoming ${callLabel} - ChatSphere`, {
+              body: `${caller?.name || "A contact"} is calling you on ChatSphere`,
+              icon: caller?.profilePic || "/favicon.svg",
+              tag: "chatsphere-incoming-call",
+              requireInteraction: true,
+            });
+            notif.onclick = () => {
+              window.focus();
+              notif.close();
+            };
+            activeNotificationRef.current = notif;
+          } catch (e) {
+            console.warn("Could not display incoming call notification:", e);
+          }
+        }
+      }
+
+      // 4. Automatic missed-call timeout after 45 seconds if unanswered
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = setTimeout(() => {
+        resetCall("Missed call");
+      }, 45000);
+    },
+    [resetCall]
+  );
+
+  // Ringtone unlock and mute controls
+  const unlockRingtone = useCallback(() => {
+    ringtoneService.unlockAudio();
+    setIsRingtoneBlocked(false);
+  }, []);
+
+  const toggleRingtoneMute = useCallback(() => {
+    const muted = ringtoneService.toggleMute();
+    setIsRingtoneMuted(muted);
+    return muted;
+  }, []);
 
   // Initialize 1-to-1 RTCPeerConnection
   const createPeerConnection = useCallback(
@@ -335,6 +451,12 @@ export const CallProvider = ({ children }) => {
         callType: type,
         callId: newCallId,
       });
+
+      // 5. Outgoing ringing timeout: automatically end if receiver does not answer in 45s
+      if (callTimeoutRef.current) clearTimeout(callTimeoutRef.current);
+      callTimeoutRef.current = setTimeout(() => {
+        endCall("No answer");
+      }, 45000);
     } catch (err) {
       console.error("Camera/Microphone permission or startCall error:", err);
       let msg = "Failed to access microphone or camera.";
@@ -406,6 +528,7 @@ export const CallProvider = ({ children }) => {
 
   // Accept an Incoming Call (1-to-1 or Group)
   const acceptCall = async () => {
+    stopIncomingAlerts();
     if (!currentCallId || !socket) return;
 
     if (isGroupCall) {
@@ -479,6 +602,7 @@ export const CallProvider = ({ children }) => {
 
   // Reject an Incoming Call
   const rejectCall = async () => {
+    stopIncomingAlerts();
     if (!currentCallId || !socket) {
       resetCall();
       return;
@@ -510,14 +634,44 @@ export const CallProvider = ({ children }) => {
   };
 
   // End an Active or Outgoing Call
-  const endCall = async (reason = "Call ended") => {
-    const cId = callIdRef.current;
+  const endCall = useCallback(
+    async (reason = "Call ended") => {
+      stopIncomingAlerts();
+      const cId = callIdRef.current;
 
-    if (isGroupCallRef.current) {
-      if (socket && cId) {
-        socket.emit("groupCall:leave", {
-          groupId: groupCallInfoRef.current?.groupId || callPeerRef.current?._id,
+      if (isGroupCallRef.current) {
+        if (socket && cId) {
+          socket.emit("groupCall:leave", {
+            groupId: groupCallInfoRef.current?.groupId || callPeerRef.current?._id,
+            callId: cId,
+          });
+        }
+
+        if (cId) {
+          const finalDuration = callDurationRef.current || 0;
+          try {
+            await API.post("/calls/log", {
+              callId: cId,
+              status: "ended",
+              endedAt: new Date().toISOString(),
+              duration: finalDuration,
+            });
+          } catch (e) {
+            console.warn("Failed to update group call log on leave:", e);
+          }
+        }
+
+        resetCall();
+        return;
+      }
+
+      // 1-to-1 End Call
+      const peerId = callPeerRef.current?._id;
+      if (socket && cId && peerId) {
+        socket.emit("call:end", {
+          targetUserId: peerId,
           callId: cId,
+          reason,
         });
       }
 
@@ -526,45 +680,19 @@ export const CallProvider = ({ children }) => {
         try {
           await API.post("/calls/log", {
             callId: cId,
-            status: "ended",
+            status: callState === "connected" ? "ended" : "missed",
             endedAt: new Date().toISOString(),
             duration: finalDuration,
           });
         } catch (e) {
-          console.warn("Failed to update group call log on leave:", e);
+          console.warn("Failed to update call log on end:", e);
         }
       }
 
       resetCall();
-      return;
-    }
-
-    // 1-to-1 End Call
-    const peerId = callPeerRef.current?._id;
-    if (socket && cId && peerId) {
-      socket.emit("call:end", {
-        targetUserId: peerId,
-        callId: cId,
-        reason,
-      });
-    }
-
-    if (cId) {
-      const finalDuration = callDurationRef.current || 0;
-      try {
-        await API.post("/calls/log", {
-          callId: cId,
-          status: callState === "connected" ? "ended" : "missed",
-          endedAt: new Date().toISOString(),
-          duration: finalDuration,
-        });
-      } catch (e) {
-        console.warn("Failed to update call log on end:", e);
-      }
-    }
-
-    resetCall();
-  };
+    },
+    [callState, resetCall, socket, stopIncomingAlerts]
+  );
 
   // Toggle Microphone Mute
   const toggleMute = () => {
@@ -614,7 +742,7 @@ export const CallProvider = ({ children }) => {
 
     // Incoming 1-to-1 call received
     const handleIncomingCall = ({ callId, callType: incomingType, caller }) => {
-      if (callState !== "idle") {
+      if (callStateRef.current !== "idle") {
         socket.emit("call:busy", { callerId: caller._id, callId });
         return;
       }
@@ -626,6 +754,7 @@ export const CallProvider = ({ children }) => {
       setCallPeer(caller);
       setIsIncoming(true);
       setCallState("incoming");
+      startIncomingAlerts(caller, incomingType, false);
     };
 
     // Incoming Group Call received
@@ -637,7 +766,7 @@ export const CallProvider = ({ children }) => {
       callId,
       caller,
     }) => {
-      if (callState !== "idle") return;
+      if (callStateRef.current !== "idle") return;
 
       setIsGroupCall(true);
       setGroupCallInfo({ groupId, groupName, groupPic, caller });
@@ -651,6 +780,7 @@ export const CallProvider = ({ children }) => {
       });
       setIsIncoming(true);
       setCallState("incoming");
+      startIncomingAlerts(caller, incomingType || "voice", true);
     };
 
     // Caller receives ringing notification
@@ -660,6 +790,10 @@ export const CallProvider = ({ children }) => {
 
     // Caller receives call accepted notification
     const handleCallAccepted = async ({ receiverId, callId }) => {
+      if (callTimeoutRef.current) {
+        clearTimeout(callTimeoutRef.current);
+        callTimeoutRef.current = null;
+      }
       setCallState("connecting");
 
       const pc = peerConnectionRef.current;
@@ -829,6 +963,7 @@ export const CallProvider = ({ children }) => {
     socket.on("groupCall:userLeft", handleGroupUserLeft);
 
     return () => {
+      stopIncomingAlerts();
       socket.off("call:incoming", handleIncomingCall);
       socket.off("call:ringing", handleCallRinging);
       socket.off("call:accepted", handleCallAccepted);
@@ -847,7 +982,6 @@ export const CallProvider = ({ children }) => {
   }, [
     socket,
     authUser,
-    callState,
     callType,
     myId,
     createPeerConnection,
@@ -855,7 +989,16 @@ export const CallProvider = ({ children }) => {
     startCallTimer,
     endCall,
     resetCall,
+    startIncomingAlerts,
+    stopIncomingAlerts,
   ]);
+
+  // Clean up alerts if CallProvider unmounts
+  useEffect(() => {
+    return () => {
+      stopIncomingAlerts();
+    };
+  }, [stopIncomingAlerts]);
 
   return (
     <CallContext.Provider
@@ -875,6 +1018,8 @@ export const CallProvider = ({ children }) => {
         isGroupCall,
         groupCallInfo,
         groupParticipants,
+        isRingtoneBlocked,
+        isRingtoneMuted,
         startCall,
         startGroupCall,
         acceptCall,
@@ -882,6 +1027,8 @@ export const CallProvider = ({ children }) => {
         endCall,
         toggleMute,
         toggleCamera,
+        unlockRingtone,
+        toggleRingtoneMute,
       }}
     >
       {children}
