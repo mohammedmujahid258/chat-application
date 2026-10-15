@@ -18,8 +18,9 @@ export const register = async (req, res) => {
 
     const cleanName = name.trim();
     const cleanEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-    if (!cleanName || !cleanEmail || password.length < 6) {
+    if (!cleanName || !cleanEmail || !emailRegex.test(cleanEmail) || password.length < 6) {
       return res.status(400).json({
         message: "Please provide valid name, email, and a password with at least 6 characters",
       });
@@ -40,8 +41,15 @@ export const register = async (req, res) => {
       password: hashedPassword,
     });
 
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
     return res.status(201).json({
       message: "User registered successfully",
+      token,
       user: {
         id: user._id,
         name: user.name,
@@ -53,6 +61,12 @@ export const register = async (req, res) => {
     });
   } catch (error) {
     console.error("Register error:", error);
+
+    if (error.code === 11000) {
+      return res.status(409).json({
+        message: "User already exists",
+      });
+    }
 
     return res.status(500).json({
       message: "Server error",

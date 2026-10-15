@@ -35,8 +35,11 @@ export const SocketProvider = ({ children }) => {
       ? "https://chat-application-ewnk.onrender.com"
       : "http://localhost:5000";
 
+    const isLocalSocketUrl =
+      sanitizedSocketUrl.includes("localhost") || sanitizedSocketUrl.includes("127.0.0.1");
+
     const socketUrl =
-      sanitizedSocketUrl && sanitizedSocketUrl.startsWith("http")
+      sanitizedSocketUrl && sanitizedSocketUrl.startsWith("http") && !(isProductionDomain && isLocalSocketUrl)
         ? sanitizedSocketUrl
         : defaultSocketUrl;
 

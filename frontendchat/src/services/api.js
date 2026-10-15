@@ -16,13 +16,18 @@ const defaultApiUrl = isProductionDomain
   ? "https://chat-application-ewnk.onrender.com/api"
   : "http://localhost:5000/api";
 
+const isLocalEnvUrl =
+  sanitizedEnvUrl.includes("localhost") || sanitizedEnvUrl.includes("127.0.0.1");
+
+// In production domains, do not use localhost even if it was baked into the build
 const resolvedApiUrl =
-  sanitizedEnvUrl && sanitizedEnvUrl.startsWith("http")
+  sanitizedEnvUrl && sanitizedEnvUrl.startsWith("http") && !(isProductionDomain && isLocalEnvUrl)
     ? sanitizedEnvUrl
     : defaultApiUrl;
 
 const API = axios.create({
   baseURL: resolvedApiUrl,
+  timeout: 45000, // 45s timeout to handle Render cold starts while avoiding indefinite hangs
 });
 
 // Automatically attach JWT token to every outgoing request if available

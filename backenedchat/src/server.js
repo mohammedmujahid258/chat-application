@@ -24,8 +24,19 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+
+// Handle invalid JSON in request body gracefully without leaking stack traces or returning HTML
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+    return res.status(400).json({
+      message: "Invalid JSON payload in request body",
+    });
+  }
+  next(err);
+});
+
 app.use("/api/users", userRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/messages", messageRoutes);
@@ -34,6 +45,14 @@ app.use("/api/groups", groupRoutes);
 
 app.get("/", (req, res) => {
   res.send("Chat application Backened is running");
+});
+
+// Global fallback error handler for API requests to return JSON rather than HTML stack traces
+app.use((err, req, res, next) => {
+  console.error("API error:", err.message);
+  res.status(err.status || 500).json({
+    message: "Server error",
+  });
 });
 
 const startServer = async () => {

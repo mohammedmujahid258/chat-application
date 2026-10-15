@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "../context/AuthContext.jsx";
 import {
   MessageSquare,
@@ -7,6 +7,7 @@ import {
   Lock,
   ArrowRight,
   AlertCircle,
+  CheckCircle,
   Eye,
   EyeOff,
   ShieldCheck,
@@ -16,30 +17,55 @@ import {
 } from "lucide-react";
 
 const Login = () => {
-  const [email, setEmail] = useState("");
+  const location = useLocation();
+  const [email, setEmail] = useState(location.state?.email || "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState(location.state?.message || "");
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // If redirected with state, ensure email and success are populated
+  useEffect(() => {
+    if (location.state?.message) {
+      setSuccess(location.state.message);
+    }
+    if (location.state?.email) {
+      setEmail(location.state.email);
+    }
+  }, [location.state]);
 
   const { login } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     setError("");
 
-    if (!email.trim() || !password) {
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail || !password) {
       setError("Please fill in both email and password.");
       return;
     }
 
     try {
       setIsSubmitting(true);
-      await login(email.trim(), password);
+      await login(trimmedEmail, password);
       navigate("/");
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "Invalid credentials. Please verify and try again.");
+      if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+        setError("Request timed out. The server might be waking up (cold start). Please try again in a few moments.");
+      } else if (err.code === "ERR_NETWORK" || !err.response) {
+        setError("Network error: Unable to connect to server. Please check your internet connection and try again.");
+      } else if (err.response?.status === 401) {
+        setError("Invalid email or password. Please verify and try again.");
+      } else if (err.response?.status >= 500) {
+        setError("Server error occurred. Please try again later.");
+      } else {
+        setError(err.response?.data?.message || err.message || "Invalid credentials. Please verify and try again.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -130,6 +156,13 @@ const Login = () => {
             </p>
           </div>
 
+          {success && (
+            <div className="mb-6 p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs sm:text-sm flex items-center gap-2.5 animate-in fade-in">
+              <CheckCircle className="h-4 w-4 shrink-0" />
+              <span>{success}</span>
+            </div>
+          )}
+
           {error && (
             <div className="mb-6 p-3.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs sm:text-sm flex items-center gap-2.5 animate-in fade-in">
               <AlertCircle className="h-4 w-4 shrink-0" />
@@ -201,11 +234,11 @@ const Login = () => {
             </button>
           </form>
 
-          <p className="text-center text-xs text-[var(--text-secondary)] mt-8">
+          <p className="text-center text-xs sm:text-sm text-[var(--text-secondary)] mt-8">
             Don't have an account?{" "}
             <Link
               to="/register"
-              className="text-emerald-500 hover:text-emerald-400 font-semibold transition-colors"
+              className="text-emerald-500 hover:text-emerald-400 font-semibold underline underline-offset-4 transition-colors"
             >
               Create account
             </Link>

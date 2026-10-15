@@ -14,9 +14,28 @@ import Profile from "./pages/Profile.jsx";
 const PublicRoute = ({ children }) => {
   const { authUser, loading } = useAuth();
 
-  if (loading) return null;
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[var(--bg-app)] text-[var(--text-primary)]">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent"></div>
+      </div>
+    );
+  }
   if (authUser) return <Navigate to="/" replace />;
   return children;
+};
+
+const FallbackRoute = () => {
+  const { authUser, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[var(--bg-app)] text-[var(--text-primary)]">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-emerald-500 border-t-transparent"></div>
+      </div>
+    );
+  }
+  return authUser ? <Navigate to="/" replace /> : <Navigate to="/login" replace />;
 };
 
 function App() {
@@ -63,7 +82,7 @@ function App() {
                         </PublicRoute>
                       }
                     />
-                    <Route path="*" element={<Navigate to="/" replace />} />
+                    <Route path="*" element={<FallbackRoute />} />
                   </Routes>
                 </div>
               </div>

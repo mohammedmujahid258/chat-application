@@ -25,35 +25,63 @@ const Register = () => {
   const [success, setSuccess] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { register, login } = useAuth();
+  const { register } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
+
     setError("");
     setSuccess("");
 
-    if (!name.trim() || !email.trim() || password.length < 6) {
-      setError("Please provide a valid name, email, and password (at least 6 characters).");
+    const trimmedName = name.trim();
+    const trimmedEmail = email.trim().toLowerCase();
+
+    if (!trimmedName) {
+      setError("Please provide your full name.");
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!trimmedEmail || !emailRegex.test(trimmedEmail)) {
+      setError("Please provide a valid email address.");
+      return;
+    }
+
+    if (!password || password.length < 6) {
+      setError("Password must be at least 6 characters long.");
       return;
     }
 
     try {
       setIsSubmitting(true);
-      await register(name.trim(), email.trim(), password);
-      setSuccess("Account created successfully! Logging you in...");
+      await register(trimmedName, trimmedEmail, password);
 
-      // Automatically sign in upon registration
-      setTimeout(async () => {
-        try {
-          await login(email.trim(), password);
-          navigate("/");
-        } catch {
-          navigate("/login");
-        }
-      }, 1000);
+      setSuccess("Account created successfully! Redirecting to login...");
+
+      // Redirect to Login page with success state and prefilled email
+      setTimeout(() => {
+        navigate("/login", {
+          state: {
+            message: "Account created successfully! Please login with your credentials.",
+            email: trimmedEmail,
+          },
+        });
+      }, 1200);
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to create account. Please try again.");
+      if (err.code === "ECONNABORTED" || err.message?.includes("timeout")) {
+        setError("Request timed out. The server might be waking up from sleep (cold start). Please try again in a few moments.");
+      } else if (err.code === "ERR_NETWORK" || !err.response) {
+        setError("Network error: Unable to connect to server. Please check your internet connection and try again.");
+      } else if (err.response?.status === 409) {
+        setError("An account with this email address already exists. Please login instead.");
+      } else if (err.response?.status >= 500) {
+        setError("Server error occurred while creating your account. Please try again later.");
+      } else {
+        setError(err.response?.data?.message || err.message || "Failed to create account. Please try again.");
+      }
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -237,13 +265,13 @@ const Register = () => {
             </button>
           </form>
 
-          <p className="text-center text-xs text-[var(--text-secondary)] mt-8">
+          <p className="text-center text-xs sm:text-sm text-[var(--text-secondary)] mt-8">
             Already have an account?{" "}
             <Link
               to="/login"
-              className="text-emerald-500 hover:text-emerald-400 font-semibold transition-colors"
+              className="text-emerald-500 hover:text-emerald-400 font-semibold underline underline-offset-4 transition-colors"
             >
-              Sign in
+              Login
             </Link>
           </p>
         </div>
